@@ -1,0 +1,72 @@
+# Environment variables and secrets
+.env
+*.json
+credentials.json
+service_account_key.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Chrome profile data
+chrome_profile_for_whatsapp/
+
+# Database files
+*.db
+*.sqlite3
+PyWhatKit_DB.txt
+
+# Logs
+*.log
+logs/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+
+# Screenshots and images that might contain sensitive info
+screenshots/
+*.png
+*.jpg
+*.jpeg
+*.gif

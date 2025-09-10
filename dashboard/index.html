@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Property SMS Sender Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Property SMS Sender Dashboard</h1>
+            <div id="last-update">Last Updated: <span>Never</span></div>
+        </header>
+
+        <section class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Dealers</h3>
+                <div class="stat-value" id="total-dealers">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>WhatsApp Sent</h3>
+                <div class="stat-value" id="whatsapp-sent">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>SMS Sent</h3>
+                <div class="stat-value" id="sms-sent">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Both Sent</h3>
+                <div class="stat-value" id="both-sent">0</div>
+            </div>
+        </section>
+
+        <section class="agents-section">
+            <h2>Agent Status</h2>
+            <div class="agents-grid">
+                <div class="agent-card" id="retrieval-agent">
+                    <h3>Retrieval Agent</h3>
+                    <div class="agent-status">
+                        <span class="status-indicator" data-status="idle"></span>
+                        <span class="status-text">Idle</span>
+                    </div>
+                    <div class="last-run">Last run: Never</div>
+                    <button class="run-btn" onclick="runAgent('retrieval')">Run Now</button>
+                </div>
+                <div class="agent-card" id="whatsapp-agent">
+                    <h3>WhatsApp Agent</h3>
+                    <div class="agent-status">
+                        <span class="status-indicator" data-status="idle"></span>
+                        <span class="status-text">Idle</span>
+                    </div>
+                    <div class="last-run">Last run: Never</div>
+                    <button class="run-btn" onclick="runAgent('whatsapp')">Run Now</button>
+                </div>
+                <div class="agent-card" id="sms-agent">
+                    <h3>SMS Agent</h3>
+                    <div class="agent-status">
+                        <span class="status-indicator" data-status="idle"></span>
+                        <span class="status-text">Idle</span>
+                    </div>
+                    <div class="last-run">Last run: Never</div>
+                    <button class="run-btn" onclick="runAgent('sms')">Run Now</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="charts-section">
+            <h2>Dealer Count History</h2>
+            <div class="chart-container">
+                <canvas id="count-chart"></canvas>
+            </div>
+        </section>
+
+        <section class="dealers-section">
+            <h2>Recent Dealers</h2>
+            <div class="table-container">
+                <table id="dealers-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Phone</th>
+                            <th>Source</th>
+                            <th>WhatsApp</th>
+                            <th>SMS</th>
+                            <th>Added On</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td colspan="6" class="no-data">No dealers found</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
