@@ -14,7 +14,7 @@ def is_within_business_hours():
     current_time = datetime.now(ist)
     current_hour = current_time.hour
     
-    if 11 <= current_hour < 18:  # 11am to 6pm (18 is 6pm in 24hr format)
+    if 11 <= current_hour < 20:  # 11am to 6pm (18 is 6pm in 24hr format)
         return True, current_time
     else:
         return False, current_time
