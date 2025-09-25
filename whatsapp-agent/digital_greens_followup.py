@@ -2,6 +2,7 @@ from whatsapp_messaging import send_followup_messages
 import sys
 import os
 import time
+import argparse
 from datetime import datetime
 import pytz
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'google-sheets-agent'))
@@ -43,9 +44,15 @@ def wait_for_business_hours():
         time.sleep(wait_minutes * 60)  # Convert minutes to seconds
 
 if __name__ == '__main__':
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Digital Greens WhatsApp Campaign")
+    parser.add_argument('--skip-business-hours', action='store_true',
+                       help='Skip business hours check and run at any time')
+    args = parser.parse_args()
+
     # --- CONFIGURATION ---
     automated_script_sending = True  # Set to True for automated daily runs
-    
+
     # Define the columns in your Google Sheet
     worksheet_name = "IPC Outreach"
     send_column = 'Send Now'
@@ -54,24 +61,27 @@ if __name__ == '__main__':
     contact_person_column = 'Contact Person'
     last_message_col = 'Last Message Sent'
     last_message_datetime_col = 'Last Message DateTime'
-    
+
     # Define the value that triggers a message to be sent
     send_trigger_value = 'YES'
     message_send_limit = -1  # Limit the number of messages sent in one run, if needed and if the value is -1 then keep sending.
     pause_between_messages = 1 # Pause in seconds
 
     # --- END CONFIGURATION ---
-    
+
     log_with_timestamp("=== Digital Greens Campaign Started ===")
-    
-    # Check if within business hours
-    if automated_script_sending:
+
+    # Check if within business hours (unless skipped)
+    if automated_script_sending and not args.skip_business_hours:
         is_business_hours, current_time = is_within_business_hours()
         if not is_business_hours:
             log_with_timestamp(f"Outside business hours (11am-6pm IST). Current time: {current_time.strftime('%H:%M:%S')}. Exiting.")
             exit(0)
         else:
             log_with_timestamp(f"Within business hours. Current time: {current_time.strftime('%H:%M:%S')}. Proceeding with campaign.")
+    elif args.skip_business_hours:
+        current_time = datetime.now(pytz.timezone('Asia/Kolkata'))
+        log_with_timestamp(f"Business hours check skipped. Current time: {current_time.strftime('%H:%M:%S')}. Proceeding with campaign.")
     
     # Step 1: Remove duplicates from IPC Outreach worksheet
     log_with_timestamp("Step 1: Removing duplicates from IPC Outreach worksheet...")

@@ -18,10 +18,19 @@ from selenium.webdriver.chrome.service import Service as ChromeService
 from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 import urllib.parse
+import math
 
-# Configure the logger
-logging.basicConfig(level=logging.DEBUG, format='DEBUG|%(message)s|file:%(filename)s:line No.%(lineno)d')
+# Configure the logger - INFO level for cleaner output
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
+
+# File logger for detailed debugging
+file_handler = logging.FileHandler('/tmp/whatsapp_debug.log')
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter('DEBUG|%(message)s|file:%(filename)s:line No.%(lineno)d'))
+debug_logger = logging.getLogger('debug')
+debug_logger.addHandler(file_handler)
+debug_logger.setLevel(logging.DEBUG)
 
 # Suppress verbose logs from underlying libraries
 logging.getLogger('googleapiclient.discovery_cache').setLevel(logging.ERROR)
@@ -30,6 +39,24 @@ logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
 logging.getLogger('oauth2client.client').setLevel(logging.WARNING)
 
 load_dotenv()
+
+def calculate_backoff_time(failure_count):
+    """Calculate exponential backoff time with max ceiling of 1 hour"""
+    if failure_count <= 0:
+        return 3  # Base wait time
+
+    wait_times = [30, 120, 600, 1800, 3600]  # 30s, 2m, 10m, 30m, 1h
+    index = min(failure_count - 1, len(wait_times) - 1)
+    return wait_times[index]
+
+def format_time(seconds):
+    """Format seconds into human readable time"""
+    if seconds < 60:
+        return f"{seconds}s"
+    elif seconds < 3600:
+        return f"{seconds//60}m {seconds%60}s"
+    else:
+        return f"{seconds//3600}h {(seconds%3600)//60}m"
 
 def get_user_input_with_timeout(prompt, timeout=10):
     """
@@ -118,15 +145,15 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
     """
     driver = None
     try:
-        logger.debug("Connecting to Google Sheet...")
+        logger.info("📊 Connecting to Google Sheet...")
+        debug_logger.debug("Connecting to Google Sheet...")
         sheet = get_google_sheet()
         if not sheet:
-            logger.debug("Could not connect to Google Sheet. Exiting.")
+            logger.error("❌ Could not connect to Google Sheet. Exiting.")
             return
 
         worksheet = sheet.worksheet(worksheet_name)
-        
-        logger.debug(f"Reading data from '{worksheet_name}' worksheet...")
+        debug_logger.debug(f"Reading data from '{worksheet_name}' worksheet...")
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
         
@@ -137,43 +164,109 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
             message_col_index = headers.index(message_col) + 1
             last_message_col_index = headers.index(last_message_col) + 1
             last_message_datetime_col_index = headers.index(last_message_datetime_col) + 1
+
+            # Add retry tracking column if it doesn't exist
+            if 'Retry_Count' not in headers:
+                retry_col_index = len(headers) + 1
+                worksheet.update_cell(1, retry_col_index, 'Retry_Count')
+                debug_logger.debug("Added Retry_Count column to worksheet")
+            else:
+                retry_col_index = headers.index('Retry_Count') + 1
+
         except ValueError as e:
-            logger.debug(f"Error: Column not found in the worksheet - {e}")
+            debug_logger.debug(f"Error: Column not found in the worksheet - {e}")
+            logger.error("❌ ERROR: Required columns not found in worksheet")
             return
         except Exception as e:
-            logger.debug(f"An error occurred while finding the column index: {e}")
+            debug_logger.debug(f"An error occurred while finding the column index: {e}")
+            logger.error("❌ ERROR: Failed to read worksheet structure")
             return
 
-        logger.debug("Setting up Chrome driver...")
+        # Rate limiting and retry tracking variables
+        consecutive_failures = 0
+        max_consecutive_failures = 5
+        max_retries_per_number = 3
+        base_wait_time = 3  # Base wait between messages
+        current_wait_time = base_wait_time
+
+        logger.info("🚀 Setting up Chrome browser...")
+        debug_logger.debug("Setting up Chrome driver...")
         options = Options()
-        # Create a new, dedicated profile for this script
-        options.add_argument("user-data-dir=./chrome_profile_for_whatsapp")
+        # Create a dedicated profile directory for WhatsApp authentication persistence
+        profile_dir = "/home/raspberrypi/CODE_STUFF/property-sms-sender/whatsapp_chrome_profile"
+
+        # Clean up any lock files from previous runs
+        import glob
+        lock_files = glob.glob(f"{profile_dir}/**/Singleton*", recursive=True)
+        for lock_file in lock_files:
+            try:
+                os.remove(lock_file)
+            except:
+                pass
+
+        options.add_argument(f"--user-data-dir={profile_dir}")
         options.add_argument("--start-maximized")
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-popup-blocking")
-        options.add_argument("--remote-debugging-port=9222")
-        
-        service = ChromeService()
+        options.add_argument("--remote-debugging-port=9223")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-background-timer-throttling")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-renderer-backgrounding")
+        # Additional stability options
+        options.add_argument("--disable-web-security")
+        options.add_argument("--disable-features=VizDisplayCompositor")
+        options.add_argument("--disable-ipc-flooding-protection")
+        options.add_argument("--page-load-strategy=eager")  # Don't wait for all resources
+
+        # Set timeouts
+        options.add_argument("--timeout=60000")  # 60 second timeout
+
+        service = ChromeService("/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=options)
-        
-        logger.debug("Checking for messages to send...")
+
+        logger.info("📋 Checking messages to send...")
+        debug_logger.debug("Chrome driver initialized successfully")
         messages_sent_count = 0
+        total_processed = 0
         for index, row in df.iterrows():
+            # Check limits and circuit breaker
             if message_send_limit != -1 and messages_sent_count >= message_send_limit:
-                logger.debug(f"Message send limit of {message_send_limit} reached. Stopping.")
+                logger.info(f"📈 Message send limit of {message_send_limit} reached. Stopping.")
+                break
+
+            if consecutive_failures >= max_consecutive_failures:
+                logger.error(f"🛑 STOPPING: {consecutive_failures} consecutive failures detected")
+                debug_logger.debug(f"Circuit breaker triggered after {consecutive_failures} failures")
                 break
 
             send_value = str(row.get(send_col, '')).strip()
-            # Check if the value in the 'send' column matches the trigger value
-            if send_value.upper() == send_col_val.upper():
+            # Check if this row needs processing
+            if send_value.upper() == send_col_val.upper() or send_value == 'Not a valid WhatsApp number':
+                total_processed += 1
                 phone_number = str(row.get(phone_col, '')).strip()
                 message = str(row.get(message_col, '')).strip()
                 contact_person = str(row.get(contact_person_col, '')).strip()
 
+                # Check retry count
+                retry_count = 0
+                try:
+                    retry_value = worksheet.cell(index + 2, retry_col_index).value
+                    retry_count = int(retry_value) if retry_value else 0
+                except:
+                    retry_count = 0
+
+                if retry_count >= max_retries_per_number:
+                    debug_logger.debug(f"Skipping {phone_number}: max retries ({max_retries_per_number}) reached")
+                    continue
+
+                # Prepare message with name replacement
                 first_name = ''
                 if contact_person and contact_person.lower() != 'unknown':
                     first_name = contact_person.split()[0].capitalize()
-                
+
                 if first_name:
                     message = message.replace('{first_name}', first_name)
                 else:
@@ -181,98 +274,108 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
 
                 cleaned_number = "".join(filter(str.isdigit, phone_number))
                 if not cleaned_number:
-                    logger.debug(f"Skipping row {index + 2}: Invalid phone number '{phone_number}'")
+                    debug_logger.debug(f"Skipping row {index + 2}: Invalid phone number '{phone_number}'")
                     continue
-                
-                full_phone_number = f"91{cleaned_number}"
 
-                logger.debug(f"Found message for {full_phone_number} in row {index + 2}. Sending...")
-                
+                full_phone_number = f"91{cleaned_number}"
+                logger.info(f"📱 Sending to +{full_phone_number} ({total_processed}/{len(df)}, retry {retry_count+1}/{max_retries_per_number})")
+
+                # Attempt to send message
+                success = False
+                error_message = ""
+
                 try:
-                    # Open chat without pre-filled message
+                    # Open chat
                     url = f"https://web.whatsapp.com/send?phone={full_phone_number}"
-                    logger.debug(f"  -> Opening URL to chat: {url}")
                     driver.get(url)
-                    
-                    wait = WebDriverWait(driver, 60)
-                    
-                    logger.debug("  -> Waiting for the text input field to be ready...")
+
+                    # Wait for text input
+                    wait = WebDriverWait(driver, 30)
                     text_input_selector = '/html/body/div[1]/div/div[1]/div[3]/div/div[4]/div/footer/div[1]/div/span/div/div[2]/div/div[3]/div/p'
                     text_input = wait.until(EC.element_to_be_clickable((By.XPATH, text_input_selector)))
-                    logger.debug("  -> Text input field is ready.")
 
-                    logger.debug("  -> Typing the message line by line...")
+                    # Type message
                     lines = message.split('\n')
                     for i, line in enumerate(lines):
                         text_input.send_keys(line)
-                        if i < len(lines) - 1: # If it's not the last line
+                        if i < len(lines) - 1:
                             ActionChains(driver).key_down(Keys.SHIFT).key_down(Keys.ENTER).key_up(Keys.ENTER).key_up(Keys.SHIFT).perform()
-                    logger.debug("  -> Message typed.")
-                    
-                    time.sleep(5) # Brief pause after typing
 
-                    send_message = True
-                    if testing:
-                        decision = input("Send this message? (Y/N): ").strip().upper()
-                        if decision != 'Y':
-                            send_message = False
-                            logger.debug("  -> User chose not to send. Clearing message...")
-                            text_input.clear()
-                            worksheet.update_cell(index + 2, send_col_index, 'Skipped')
-                            logger.debug(f"  -> Marked row {index + 2} as 'Skipped'")
-                    else:
-                        # Non-testing mode: 10-second timeout to press 'N' to skip
-                        logger.debug("  -> You have 10 seconds to press 'N' and Enter to skip this message...")
-                        decision = get_user_input_with_timeout("Press 'N' and Enter to skip (auto-send in 10s): ", 10)
-                        if decision and decision.upper() == 'N':
-                            send_message = False
-                            logger.debug("  -> User chose not to send. Clearing message...")
-                            text_input.clear()
-                            worksheet.update_cell(index + 2, send_col_index, 'Skipped')
-                            logger.debug(f"  -> Marked row {index + 2} as 'Skipped'")
-                        else:
-                            if decision is None:
-                                logger.debug("  -> No input received within 10 seconds. Proceeding to send...")
-                            else:
-                                logger.debug("  -> Input received but not 'N'. Proceeding to send...")
+                    time.sleep(1)
 
-                    if send_message:
-                        logger.debug("  -> Sending 'Enter' key to send the message...")
+                    # Send message (skip testing prompts for automation)
+                    if not testing:
                         text_input.send_keys(Keys.RETURN)
-                        logger.debug("  -> 'Enter' key sent.")
-                        
-                        logger.debug(f"  -> Message sent to +{full_phone_number}")
-                        time.sleep(5)
+                        time.sleep(2)
 
+                        # Update success
                         messages_sent_count += 1
-                        logger.debug(f"  -> Updating Google Sheet for row {index + 2}...")
+                        current_time = time.strftime('%Y-%m-%d %H:%M:%S')
                         worksheet.update_cell(index + 2, send_col_index, 'Sent')
-                        worksheet.update_cell(index + 2, message_col_index, '')
                         worksheet.update_cell(index + 2, last_message_col_index, message)
-                        worksheet.update_cell(index + 2, last_message_datetime_col_index, time.strftime('%Y-%m-%d %H:%M:%S'))
-                        logger.debug(f"  -> Marked row {index + 2} as 'Sent'")
+                        worksheet.update_cell(index + 2, last_message_datetime_col_index, current_time)
+                        worksheet.update_cell(index + 2, retry_col_index, 0)  # Reset retry count on success
 
-                        logger.debug(f"  -> Pausing for {pause_between_messages} second(s)...")
-                        time.sleep(pause_between_messages)
+                        logger.info(f"✅ SUCCESS: +{full_phone_number}")
+                        consecutive_failures = 0  # Reset failure counter
+                        current_wait_time = base_wait_time  # Reset wait time
+                        success = True
 
-                except TimeoutException:
-                    logger.debug(f"  -> Failed to find message box for +{full_phone_number}. Likely not a valid WhatsApp number.")
-                    worksheet.update_cell(index + 2, send_col_index, 'Not a valid WhatsApp number')
-                    logger.debug(f"  -> Marked row {index + 2} as 'Not a valid WhatsApp number'")
+                except TimeoutException as e:
+                    error_message = "Timeout - may not be valid WhatsApp number"
+                    debug_logger.debug(f"TimeoutException for +{full_phone_number}: {e}")
                 except Exception as e:
-                    logger.debug(f"  -> An unexpected error occurred for +{full_phone_number}: {e}")
-                    worksheet.update_cell(index + 2, send_col_index, 'Failed')
-                    logger.debug(f"  -> Marked row {index + 2} as 'Failed'")
+                    # Check for specific rate limiting errors
+                    error_str = str(e).lower()
+                    if "read timed out" in error_str or "connection" in error_str:
+                        error_message = "Connection timeout"
+                    else:
+                        error_message = f"Error: {str(e)[:50]}..."
+                    debug_logger.debug(f"Exception for +{full_phone_number}: {e}")
 
-        logger.debug("\nProcess complete. All pending messages have been handled.")
+                # Handle failure
+                if not success:
+                    consecutive_failures += 1
+                    retry_count += 1
+
+                    # Update retry count in sheet
+                    worksheet.update_cell(index + 2, retry_col_index, retry_count)
+
+                    if retry_count >= max_retries_per_number:
+                        worksheet.update_cell(index + 2, send_col_index, f'Failed - {error_message}')
+                        logger.error(f"❌ FAILED: +{full_phone_number} - {error_message} (gave up after {max_retries_per_number} tries)")
+                    else:
+                        worksheet.update_cell(index + 2, send_col_index, send_col_val)  # Keep for retry
+                        logger.warning(f"⚠️  RETRY {retry_count}/{max_retries_per_number}: +{full_phone_number} - {error_message}")
+
+                    # Apply exponential backoff
+                    backoff_time = calculate_backoff_time(consecutive_failures)
+                    if backoff_time > base_wait_time:
+                        logger.info(f"⏳ RATE LIMIT: Waiting {format_time(backoff_time)} due to {consecutive_failures} consecutive failures...")
+                        time.sleep(backoff_time)
+                    else:
+                        time.sleep(current_wait_time)
+
+                elif success:
+                    # Normal pause between successful messages
+                    time.sleep(current_wait_time)
+
+        # Final summary
+        logger.info(f"🏁 COMPLETED: {messages_sent_count} messages sent, {total_processed} total processed")
+        if consecutive_failures >= max_consecutive_failures:
+            logger.error(f"⚠️  Stopped due to circuit breaker ({consecutive_failures} consecutive failures)")
 
     except gspread.exceptions.WorksheetNotFound:
-        logger.debug(f"Error: Worksheet '{worksheet_name}' not found.")
+        logger.error(f"❌ ERROR: Worksheet '{worksheet_name}' not found")
     except KeyboardInterrupt:
-        logger.debug("Process interrupted by user. Closing Chrome driver...")
+        logger.info("🛑 Process interrupted by user")
     except Exception as e:
-        logger.debug(f"An unexpected error occurred: {e}")
+        logger.error(f"❌ CRITICAL ERROR: {e}")
+        debug_logger.debug(f"Critical error details: {e}")
     finally:
         if driver:
-            driver.quit()
-            logger.debug("Chrome driver closed.")
+            try:
+                driver.quit()
+                logger.info("🔒 Chrome browser closed")
+            except:
+                debug_logger.debug("Error closing Chrome driver")

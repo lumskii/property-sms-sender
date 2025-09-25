@@ -12,16 +12,18 @@ import logging
 import signal
 import time
 import psutil
+import argparse
 from datetime import datetime
 from pathlib import Path
 
 
 class WhatsAppCampaignRunner:
-    def __init__(self):
+    def __init__(self, skip_business_hours=False):
         self.project_dir = Path(__file__).parent.absolute()
         self.venv_dir = self.project_dir / "venv"
         self.log_dir = self.project_dir / "logs"
         self.lock_file = self.project_dir / "whatsapp_campaigns.lock"
+        self.skip_business_hours = skip_business_hours
 
         # Create logs directory
         self.log_dir.mkdir(exist_ok=True)
@@ -234,8 +236,13 @@ class WhatsAppCampaignRunner:
             self.log_message(f"ERROR: {script_name} not found")
             return False
 
+        # Add business hours flag if specified
+        cmd = f"{python_path} {script_name}"
+        if self.skip_business_hours:
+            cmd += " --skip-business-hours"
+
         result = self.run_command(
-            f"{python_path} {script_name}",
+            cmd,
             cwd=self.project_dir / "whatsapp-agent",
             capture_output=False
         )
@@ -303,5 +310,17 @@ class WhatsAppCampaignRunner:
 
 
 if __name__ == "__main__":
-    runner = WhatsAppCampaignRunner()
+    parser = argparse.ArgumentParser(description="WhatsApp Campaigns Automation")
+    parser.add_argument('--business_hours_check',
+                       choices=['true', 'false'],
+                       default='true',
+                       help='Enable or disable business hours check (default: true)')
+
+    args = parser.parse_args()
+    skip_business_hours = args.business_hours_check.lower() == 'false'
+
+    if skip_business_hours:
+        print("[INFO] Business hours check disabled - script will run at any time")
+
+    runner = WhatsAppCampaignRunner(skip_business_hours=skip_business_hours)
     runner.main()
