@@ -15,6 +15,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service as ChromeService
+from webdriver_manager.chrome import ChromeDriverManager
 from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 import urllib.parse
@@ -100,72 +101,195 @@ def get_user_input_with_timeout(prompt, timeout=10):
             print()  # New line
             return None
 
-def attach_files_to_whatsapp(driver, file_paths):
+def attach_files_to_whatsapp(driver, file_paths, send_as_document=True):
     """
     Attach multiple files to WhatsApp message using the attachment button
     
     Args:
         driver: Selenium WebDriver instance
         file_paths: List of local file paths to attach
+        send_as_document: If True, send images as documents (uncompressed). If False, send as photos (compressed)
     """
     try:
-        debug_logger.debug(f"  -> Attaching {len(file_paths)} file(s)...")
+        debug_logger.debug(f"  -> Attaching {len(file_paths)} file(s)... (as {'documents' if send_as_document else 'photos'})")
         
-        # Click the attachment (paperclip) button
-        wait = WebDriverWait(driver, 10)
-        
-        # Try different selectors for the attachment button
-        attachment_btn_selectors = [
-            '//div[@title="Attach"]',
-            '//span[@data-icon="plus"]',
-            '//span[@data-icon="clip"]',
-        ]
-        
-        attachment_btn = None
-        for selector in attachment_btn_selectors:
-            try:
-                attachment_btn = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-                break
-            except:
-                continue
-        
-        if not attachment_btn:
-            debug_logger.error("  -> Could not find attachment button")
-            return False
-        
-        attachment_btn.click()
-        time.sleep(0.5)
-        
-        # Find the file input element (it's hidden but we can send keys to it)
+        # Method 1: Try to find and use the file input directly (most reliable)
         file_input_selectors = [
             '//input[@accept="image/*,video/mp4,video/3gpp,video/quicktime"]',
             '//input[@type="file"][@accept]',
             '//input[@type="file"]',
         ]
         
+        # If sending as document, we need different selectors
+        if send_as_document:
+            file_input_selectors = [
+                '//input[@type="file"][not(@accept)]',  # Document input doesn't have accept attribute
+                '//input[@type="file"]',
+            ]
+        
+        wait = WebDriverWait(driver, 10)
         file_input = None
-        for selector in file_input_selectors:
-            try:
-                file_input = driver.find_element(By.XPATH, selector)
-                break
-            except:
-                continue
+        
+        # For documents, we need to click the attachment button first, then click "Document"
+        if send_as_document:
+            debug_logger.debug("  -> Clicking attachment button to access document option...")
+            
+            # Click the attachment (paperclip) button
+            attachment_btn_selectors = [
+                '//div[@title="Attach"]',
+                '//span[@data-icon="plus"]',
+                '//span[@data-icon="clip"]',
+                '//span[@data-icon="attach-menu-plus"]',
+                '//button[@aria-label="Attach"]',
+                '//div[@aria-label="Attach"]',
+                '//span[@data-testid="clip"]',
+                '//div[contains(@class, "attach")]',
+            ]
+            
+            attachment_btn = None
+            for selector in attachment_btn_selectors:
+                try:
+                    debug_logger.debug(f"  -> Trying attachment button selector: {selector}")
+                    attachment_btn = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
+                    debug_logger.debug(f"  -> Found attachment button with selector: {selector}")
+                    break
+                except:
+                    continue
+            
+            if not attachment_btn:
+                debug_logger.error("  -> Could not find attachment button")
+                return False
+            
+            attachment_btn.click()
+            debug_logger.debug("  -> Clicked attachment button")
+            time.sleep(1)
+            
+            # Now click the "Document" option
+            document_btn_selectors = [
+                '//input[@accept="*"][@type="file"]',  # Document file input
+                '//span[@data-icon="document"]',
+                '//button[@aria-label="Document"]',
+                '//li[@aria-label="Document"]',
+                '//span[contains(text(), "Document")]',
+            ]
+            
+            for selector in document_btn_selectors:
+                try:
+                    debug_logger.debug(f"  -> Trying document button selector: {selector}")
+                    
+                    # Check if it's an input element (direct file input)
+                    if 'input' in selector.lower():
+                        file_input = driver.find_element(By.XPATH, selector)
+                        debug_logger.debug(f"  -> Found document file input with selector: {selector}")
+                        break
+                    else:
+                        # It's a button, click it
+                        doc_btn = driver.find_element(By.XPATH, selector)
+                        doc_btn.click()
+                        debug_logger.debug(f"  -> Clicked document button")
+                        time.sleep(0.5)
+                        
+                        # Now find the file input
+                        file_input = driver.find_element(By.XPATH, '//input[@type="file"]')
+                        debug_logger.debug(f"  -> Found file input after clicking document button")
+                        break
+                except Exception as e:
+                    debug_logger.debug(f"  -> Document button selector failed: {selector}")
+                    continue
+        else:
+            # For photos/images, try to find file input directly
+            for selector in file_input_selectors:
+                try:
+                    debug_logger.debug(f"  -> Trying to find file input directly: {selector}")
+                    file_input = driver.find_element(By.XPATH, selector)
+                    debug_logger.debug(f"  -> Found file input directly with selector: {selector}")
+                    break
+                except Exception as e:
+                    debug_logger.debug(f"  -> Direct file input search failed: {selector}")
+                    continue
+            
+            # If file input not found directly, try clicking attachment button first
+            if not file_input:
+                debug_logger.debug("  -> File input not found directly, trying to click attachment button...")
+                
+                # Click the attachment (paperclip) button
+                wait = WebDriverWait(driver, 30)
+                
+                # Try different selectors for the attachment button
+                attachment_btn_selectors = [
+                    '//div[@title="Attach"]',
+                    '//span[@data-icon="plus"]',
+                    '//span[@data-icon="clip"]',
+                    '//span[@data-icon="attach-menu-plus"]',
+                    '//button[@aria-label="Attach"]',
+                    '//div[@aria-label="Attach"]',
+                    '//span[@data-testid="clip"]',
+                    '//div[contains(@class, "attach")]',
+                ]
+                
+                attachment_btn = None
+                for selector in attachment_btn_selectors:
+                    try:
+                        debug_logger.debug(f"  -> Trying attachment button selector: {selector}")
+                        attachment_btn = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
+                        debug_logger.debug(f"  -> Found attachment button with selector: {selector}")
+                        break
+                    except Exception as e:
+                        debug_logger.debug(f"  -> Attachment button selector failed: {selector}")
+                        continue
+                
+                if not attachment_btn:
+                    debug_logger.error("  -> Could not find attachment button")
+                    return False
+                
+                attachment_btn.click()
+                debug_logger.debug("  -> Clicked attachment button")
+                time.sleep(1)
+                
+                # Now try to find file input again
+                for selector in file_input_selectors:
+                    try:
+                        debug_logger.debug(f"  -> Trying file input selector after clicking button: {selector}")
+                        file_input = driver.find_element(By.XPATH, selector)
+                        debug_logger.debug(f"  -> Found file input with selector: {selector}")
+                        break
+                    except Exception as e:
+                        debug_logger.debug(f"  -> File input selector failed: {selector}")
+                        continue
         
         if not file_input:
             debug_logger.error("  -> Could not find file input element")
             return False
         
-        # Send all file paths at once (separated by newline for multiple files)
-        files_string = '\n'.join([str(fp) for fp in file_paths])
-        file_input.send_keys(files_string)
+        # Send files one at a time (WhatsApp Web doesn't support multiple files at once)
+        for i, file_path in enumerate(file_paths):
+            # Convert to absolute path if needed
+            abs_path = os.path.abspath(file_path) if not os.path.isabs(file_path) else file_path
+            debug_logger.debug(f"  -> Attaching file {i+1}/{len(file_paths)}: {abs_path}")
+            file_input.send_keys(abs_path)
+            time.sleep(1)  # Wait between files
+            
+            # After first file, need to find file input again for subsequent files
+            if i < len(file_paths) - 1:
+                time.sleep(1)
+                # Find file input again for next file
+                for selector in file_input_selectors:
+                    try:
+                        file_input = driver.find_element(By.XPATH, selector)
+                        debug_logger.debug(f"  -> Found file input for next file")
+                        break
+                    except:
+                        continue
         
-        debug_logger.debug(f"  -> Files attached successfully, waiting for preview to load...")
-        time.sleep(2)  # Wait for preview to load
+        debug_logger.debug(f"  -> All files attached successfully, waiting for preview to load...")
+        time.sleep(3)
         
         return True
         
     except Exception as e:
         debug_logger.error(f"  -> Failed to attach files: {e}")
+        import traceback
+        debug_logger.error(f"  -> Traceback: {traceback.format_exc()}")
         return False
 
 def get_google_sheet():
@@ -233,6 +357,12 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
         
+        # Debug: Log what we found
+        logger.info(f"📝 Found {len(df)} total rows in worksheet")
+        if len(df) > 0 and send_col in df.columns:
+            send_col_values = df[send_col].value_counts()
+            logger.info(f"📋 '{send_col}' column values: {send_col_values.to_dict()}")
+        
         # Get the 1-based index for the 'send' column
         try:
             headers = worksheet.row_values(1)
@@ -269,7 +399,11 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
         debug_logger.debug("Setting up Chrome driver...")
         options = Options()
         # Create a dedicated profile directory for WhatsApp authentication persistence
-        profile_dir = "/home/raspberrypi/CODE_STUFF/property-sms-sender/whatsapp_chrome_profile"
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        profile_dir = os.path.join(script_dir, "chrome_profile_for_whatsapp")
+        
+        # Create profile directory if it doesn't exist
+        os.makedirs(profile_dir, exist_ok=True)
 
         # Clean up any lock files from previous runs
         import glob
@@ -300,7 +434,22 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
         # Set timeouts
         options.add_argument("--timeout=60000")  # 60 second timeout
 
-        service = ChromeService("/usr/bin/chromedriver")
+        # Get ChromeDriver path from webdriver-manager
+        driver_path = ChromeDriverManager().install()
+        
+        # Fix webdriver-manager bug: it sometimes returns the wrong file
+        # Check if path ends with an incorrect file and fix it
+        if 'THIRD_PARTY_NOTICES' in driver_path or 'LICENSE' in driver_path:
+            # Get the directory and point to the actual chromedriver executable
+            driver_dir = os.path.dirname(driver_path)
+            driver_path = os.path.join(driver_dir, 'chromedriver')
+            debug_logger.debug(f"Fixed ChromeDriver path to: {driver_path}")
+        
+        # Make sure the driver is executable
+        if os.path.exists(driver_path):
+            os.chmod(driver_path, 0o755)
+        
+        service = ChromeService(driver_path)
         driver = webdriver.Chrome(service=service, options=options)
 
         logger.info("📋 Checking messages to send...")
@@ -319,8 +468,9 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
                 break
 
             send_value = str(row.get(send_col, '')).strip()
-            # Check if this row needs processing
-            if send_value.upper() == send_col_val.upper() or send_value == 'Not a valid WhatsApp number':
+            # Check if this row needs processing (accept YES, TRUE, or the configured value)
+            send_triggers = [send_col_val.upper(), 'YES', 'TRUE']
+            if send_value.upper() in send_triggers or send_value == 'Not a valid WhatsApp number':
                 total_processed += 1
                 phone_number = str(row.get(phone_col, '')).strip()
                 message = str(row.get(message_col, '')).strip()
@@ -370,11 +520,48 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
                     # Open chat
                     url = f"https://web.whatsapp.com/send?phone={full_phone_number}"
                     driver.get(url)
+                    debug_logger.debug(f"  -> Opened WhatsApp chat URL: {url}")
 
-                    # Wait for text input
-                    wait = WebDriverWait(driver, 30)
-                    text_input_selector = '/html/body/div[1]/div/div[1]/div[3]/div/div[4]/div/footer/div[1]/div/span/div/div[2]/div/div[3]/div/p'
-                    text_input = wait.until(EC.element_to_be_clickable((By.XPATH, text_input_selector)))
+                    # Wait for text input - this ensures the chat is fully loaded
+                    wait = WebDriverWait(driver, 45)  # Increased timeout for QR code scan if needed
+                    
+                    # Try multiple selectors for the text input field (WhatsApp changes these frequently)
+                    text_input_selectors = [
+                        '/html/body/div[1]/div/div[1]/div[3]/div/div[4]/div/footer/div[1]/div/span/div/div[2]/div/div[3]/div/p',
+                        '//div[@contenteditable="true"][@data-tab="10"]',
+                        '//div[@contenteditable="true"][@role="textbox"]',
+                        '//div[@title="Type a message"]',
+                        '//div[contains(@class, "copyable-text")][@contenteditable="true"]',
+                        '//*[@id="main"]/footer//div[@contenteditable="true"]',
+                    ]
+                    
+                    text_input = None
+                    for selector in text_input_selectors:
+                        try:
+                            debug_logger.debug(f"  -> Trying text input selector: {selector}")
+                            text_input = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
+                            debug_logger.debug(f"  -> Found text input with selector: {selector}")
+                            break
+                        except Exception as e:
+                            debug_logger.debug(f"  -> Text input selector failed: {selector[:50]}...")
+                            continue
+                    
+                    if not text_input:
+                        # Check if we're on the QR code page
+                        try:
+                            qr_code = driver.find_element(By.XPATH, '//canvas[@aria-label="Scan this QR code to link a device!"]')
+                            error_message = "WhatsApp Web not logged in. Please scan QR code!"
+                            debug_logger.error(f"  -> {error_message}")
+                            raise Exception(error_message)
+                        except:
+                            pass
+                        
+                        error_message = "Could not find text input field. WhatsApp Web page structure may have changed."
+                        debug_logger.error(f"  -> {error_message}")
+                        raise TimeoutException(error_message)
+                    
+                    debug_logger.debug("  -> Chat opened and text input found")
+                    time.sleep(2)  # Extra wait to ensure chat is fully loaded
                     
                     # Handle attachments if present
                     if attachment_urls:
@@ -384,36 +571,103 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
                         if downloaded_files:
                             debug_logger.debug(f"  -> Successfully downloaded {len(downloaded_files)} file(s)")
                             
-                            # Attach files to WhatsApp
-                            if not attach_files_to_whatsapp(driver, downloaded_files):
+                            # Attach files to WhatsApp (send as documents for full quality)
+                            if not attach_files_to_whatsapp(driver, downloaded_files, send_as_document=True):
                                 debug_logger.error("  -> Failed to attach files, proceeding with text only")
                             else:
                                 # Wait for attachment preview to load
-                                time.sleep(2)
+                                debug_logger.debug("  -> Waiting for attachment preview to load...")
+                                time.sleep(3)  # Increased wait time
                                 
-                                # After attaching files, the text input field might change to a caption field
-                                try:
-                                    caption_selector = '//div[@contenteditable="true"][@data-tab="10"]'
-                                    text_input = wait.until(EC.element_to_be_clickable((By.XPATH, caption_selector)))
-                                    debug_logger.debug("  -> Caption field found after attaching files")
-                                except:
-                                    debug_logger.debug("  -> Using original text input field")
+                                # After attaching files, find the caption/message input field
+                                # Try multiple selectors for the caption field
+                                caption_selectors = [
+                                    '//div[@contenteditable="true"][@data-tab="10"]',
+                                    '//div[@contenteditable="true"][@role="textbox"]',
+                                    '//div[contains(@class, "copyable-text")][@contenteditable="true"]',
+                                    '//*[@id="app"]//footer//div[@contenteditable="true"]',
+                                ]
+                                
+                                caption_found = False
+                                for selector in caption_selectors:
+                                    try:
+                                        debug_logger.debug(f"  -> Trying caption field selector: {selector}")
+                                        text_input = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, selector)))
+                                        debug_logger.debug(f"  -> Caption field found with selector: {selector}")
+                                        caption_found = True
+                                        break
+                                    except:
+                                        debug_logger.debug(f"  -> Caption selector failed: {selector}")
+                                        continue
+                                
+                                if not caption_found:
+                                    debug_logger.warning("  -> Could not find caption field, message may not be added to attachment")
                         else:
                             debug_logger.warning("  -> No files downloaded, sending text only")
 
                     # Type message (use clean_message without attachment URLs)
-                    lines = clean_message.split('\n')
-                    for i, line in enumerate(lines):
-                        text_input.send_keys(line)
-                        if i < len(lines) - 1:
-                            ActionChains(driver).key_down(Keys.SHIFT).key_down(Keys.ENTER).key_up(Keys.ENTER).key_up(Keys.SHIFT).perform()
+                    if text_input:
+                        debug_logger.debug(f"  -> Typing message: {clean_message[:100]}...")
+                        
+                        # Use JavaScript to set the text instead of clicking (avoids click interception issues)
+                        try:
+                            # Try JavaScript first for reliability
+                            driver.execute_script("arguments[0].focus();", text_input)
+                            time.sleep(0.3)
+                            
+                            lines = clean_message.split('\n')
+                            for i, line in enumerate(lines):
+                                text_input.send_keys(line)
+                                if i < len(lines) - 1:
+                                    ActionChains(driver).key_down(Keys.SHIFT).key_down(Keys.ENTER).key_up(Keys.ENTER).key_up(Keys.SHIFT).perform()
+                            
+                            debug_logger.debug("  -> Message typed successfully")
+                        except Exception as e:
+                            debug_logger.error(f"  -> Failed to type message: {e}")
+                    else:
+                        debug_logger.error("  -> No text input field available")
 
                     time.sleep(1)
 
                     # Send message (skip testing prompts for automation)
                     if not testing:
-                        text_input.send_keys(Keys.RETURN)
+                        debug_logger.debug("  -> Looking for send button...")
+                        
+                        # If attachments were added, need to click the send button instead of pressing RETURN
+                        if attachment_urls and downloaded_files:
+                            # Try to find and click the send button
+                            send_button_selectors = [
+                                '//span[@data-icon="wds-ic-send-filled"]',
+                                '//span[@data-icon="send"]',
+                                '//button[@aria-label="Send"]',
+                                '//span[@data-testid="send"]',
+                                '//div[@role="button"][@aria-label="Send"]',
+                            ]
+                            
+                            send_button_found = False
+                            for selector in send_button_selectors:
+                                try:
+                                    debug_logger.debug(f"  -> Trying send button selector: {selector}")
+                                    send_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
+                                    send_button.click()
+                                    debug_logger.debug(f"  -> Clicked send button with selector: {selector}")
+                                    send_button_found = True
+                                    break
+                                except Exception as e:
+                                    debug_logger.debug(f"  -> Send button selector failed: {selector}")
+                                    continue
+                            
+                            if not send_button_found:
+                                # Fallback to pressing RETURN
+                                debug_logger.debug("  -> Send button not found, trying RETURN key...")
+                                text_input.send_keys(Keys.RETURN)
+                        else:
+                            # No attachments, just press RETURN
+                            debug_logger.debug("  -> Pressing send button (RETURN key)...")
+                            text_input.send_keys(Keys.RETURN)
+                        
                         time.sleep(2)
+                        debug_logger.debug("  -> Message sent successfully")
 
                         # Update success
                         messages_sent_count += 1

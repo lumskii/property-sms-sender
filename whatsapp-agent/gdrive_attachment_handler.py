@@ -141,21 +141,26 @@ class GDriveAttachmentHandler:
             return cached_file
         
         try:
+            logger.debug(f"  -> Starting download for URL: {url[:80]}...")
+            
             # Extract file ID
             file_id = self._extract_file_id(url)
             if not file_id:
                 logger.error(f"  -> Could not extract file ID from URL: {url}")
                 return None
             
+            logger.debug(f"  -> Extracted file ID: {file_id}")
+            
             # Get direct download URL
             download_url = self._get_direct_download_url(file_id)
+            logger.debug(f"  -> Direct download URL: {download_url}")
             
             # Download file
             logger.debug(f"  -> Downloading file from Google Drive: {file_id}")
             
             # Create a session to handle redirects and cookies
             session = requests.Session()
-            response = session.get(download_url, stream=True, timeout=30)
+            response = session.get(download_url, stream=True, timeout=60)  # Increased from 30 to 60
             
             # Handle Google Drive virus scan warning
             if 'download_warning' in response.text or 'confirm=' in response.text:
@@ -163,7 +168,7 @@ class GDriveAttachmentHandler:
                 for key, value in response.cookies.items():
                     if key.startswith('download_warning'):
                         download_url = f"{download_url}&confirm={value}"
-                        response = session.get(download_url, stream=True, timeout=30)
+                        response = session.get(download_url, stream=True, timeout=60)  # Increased from 30 to 60
                         break
             
             response.raise_for_status()
