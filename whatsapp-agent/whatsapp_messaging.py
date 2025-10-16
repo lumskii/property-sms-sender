@@ -18,6 +18,7 @@ from selenium.webdriver.chrome.service import Service as ChromeService
 from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 import urllib.parse
+from gdrive_attachment_handler import GDriveAttachmentHandler
 
 # Configure the logger
 logging.basicConfig(level=logging.DEBUG, format='DEBUG|%(message)s|file:%(filename)s:line No.%(lineno)d')
@@ -72,6 +73,76 @@ def get_user_input_with_timeout(prompt, timeout=10):
             print()  # New line
             return None
 
+def attach_files_to_whatsapp(driver, file_paths):
+    """
+    Attach multiple files to WhatsApp message using the attachment button
+    
+    Args:
+        driver: Selenium WebDriver instance
+        file_paths: List of local file paths to attach
+    """
+    try:
+        logger.debug(f"  -> Attaching {len(file_paths)} file(s)...")
+        
+        # Click the attachment (paperclip) button
+        wait = WebDriverWait(driver, 10)
+        
+        # Try different selectors for the attachment button
+        attachment_btn_selectors = [
+            '//div[@title="Attach"]',
+            '//span[@data-icon="plus"]',
+            '//span[@data-icon="clip"]',
+        ]
+        
+        attachment_btn = None
+        for selector in attachment_btn_selectors:
+            try:
+                attachment_btn = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
+                break
+            except:
+                continue
+        
+        if not attachment_btn:
+            logger.error("  -> Could not find attachment button")
+            return False
+        
+        attachment_btn.click()
+        time.sleep(0.5)
+        
+        # Click on the "Photos & Videos" option or "Document" option
+        # Find the file input element (it's hidden but we can send keys to it)
+        file_input_selectors = [
+            '//input[@accept="image/*,video/mp4,video/3gpp,video/quicktime"]',
+            '//input[@type="file"][@accept]',
+            '//input[@type="file"]',
+        ]
+        
+        file_input = None
+        for selector in file_input_selectors:
+            try:
+                file_input = driver.find_element(By.XPATH, selector)
+                break
+            except:
+                continue
+        
+        if not file_input:
+            logger.error("  -> Could not find file input element")
+            return False
+        
+        # Send all file paths at once (separated by newline for multiple files)
+        files_string = '\n'.join([str(fp) for fp in file_paths])
+        file_input.send_keys(files_string)
+        
+        logger.debug(f"  -> Files attached successfully, waiting for preview to load...")
+        time.sleep(2)  # Wait for preview to load
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"  -> Failed to attach files: {e}")
+        return False
+
+
 def get_google_sheet():
     # Define the scope
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -115,14 +186,21 @@ def get_google_sheet():
 def send_followup_messages(worksheet_name, send_col, phone_col, message_col, contact_person_col, last_message_col, last_message_datetime_col, send_col_val, message_send_limit, pause_between_messages=1, testing=False):
     """
     Sends follow-up messages based on the 'IPC Outreach' Google Sheet.
+    Supports attachments from Google Drive links in the format:
+    Message text Attachments: [url1, url2, url3]
     """
     driver = None
+    attachment_handler = None
     try:
         logger.debug("Connecting to Google Sheet...")
         sheet = get_google_sheet()
         if not sheet:
             logger.debug("Could not connect to Google Sheet. Exiting.")
             return
+        
+        # Initialize attachment handler
+        attachment_handler = GDriveAttachmentHandler(cache_dir="./gdrive_cache")
+        logger.debug("Attachment handler initialized with caching enabled")
 
         worksheet = sheet.worksheet(worksheet_name)
         
@@ -189,6 +267,12 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
                 logger.debug(f"Found message for {full_phone_number} in row {index + 2}. Sending...")
                 
                 try:
+                    # Parse message for attachments
+                    clean_message, attachment_urls = attachment_handler.parse_attachments_from_message(message)
+                    
+                    if attachment_urls:
+                        logger.debug(f"  -> Found {len(attachment_urls)} attachment(s) in message")
+                    
                     # Open chat without pre-filled message
                     url = f"https://web.whatsapp.com/send?phone={full_phone_number}"
                     logger.debug(f"  -> Opening URL to chat: {url}")
@@ -200,9 +284,35 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
                     text_input_selector = '/html/body/div[1]/div/div[1]/div[3]/div/div[4]/div/footer/div[1]/div/span/div/div[2]/div/div[3]/div/p'
                     text_input = wait.until(EC.element_to_be_clickable((By.XPATH, text_input_selector)))
                     logger.debug("  -> Text input field is ready.")
+                    
+                    # Handle attachments if present
+                    if attachment_urls:
+                        logger.debug("  -> Downloading attachments from Google Drive...")
+                        downloaded_files = attachment_handler.download_multiple(attachment_urls)
+                        
+                        if downloaded_files:
+                            logger.debug(f"  -> Successfully downloaded {len(downloaded_files)} file(s)")
+                            
+                            # Attach files to WhatsApp
+                            if not attach_files_to_whatsapp(driver, downloaded_files):
+                                logger.error("  -> Failed to attach files, proceeding with text only")
+                            else:
+                                # Wait for attachment preview to load
+                                time.sleep(2)
+                                
+                                # After attaching files, the text input field might change to a caption field
+                                # Try to find the caption input field
+                                try:
+                                    caption_selector = '//div[@contenteditable="true"][@data-tab="10"]'
+                                    text_input = wait.until(EC.element_to_be_clickable((By.XPATH, caption_selector)))
+                                    logger.debug("  -> Caption field found after attaching files")
+                                except:
+                                    logger.debug("  -> Using original text input field")
+                        else:
+                            logger.warning("  -> No files downloaded, sending text only")
 
                     logger.debug("  -> Typing the message line by line...")
-                    lines = message.split('\n')
+                    lines = clean_message.split('\n')
                     for i, line in enumerate(lines):
                         text_input.send_keys(line)
                         if i < len(lines) - 1: # If it's not the last line
@@ -248,7 +358,8 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
                         logger.debug(f"  -> Updating Google Sheet for row {index + 2}...")
                         worksheet.update_cell(index + 2, send_col_index, 'Sent')
                         worksheet.update_cell(index + 2, message_col_index, '')
-                        worksheet.update_cell(index + 2, last_message_col_index, message)
+                        # Save the clean message without attachment URLs
+                        worksheet.update_cell(index + 2, last_message_col_index, clean_message)
                         worksheet.update_cell(index + 2, last_message_datetime_col_index, time.strftime('%Y-%m-%d %H:%M:%S'))
                         logger.debug(f"  -> Marked row {index + 2} as 'Sent'")
 

@@ -35,6 +35,10 @@ ENV/
 # Chrome profile data
 chrome_profile_for_whatsapp/
 
+# Google Drive cache
+gdrive_cache/
+test_cache/
+
 # Database files
 *.db
 *.sqlite3

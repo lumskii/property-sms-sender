@@ -114,6 +114,49 @@ The system supports two vision modes:
 - Recent dealers table
 - Manual agent triggers
 
+## WhatsApp Attachments Feature
+
+The WhatsApp automation now supports sending **images, videos, and documents** from Google Drive along with your messages!
+
+### Quick Start
+
+1. Upload your file to Google Drive
+2. Get the shareable link (make sure it's set to "Anyone with the link can view")
+3. Add it to your Google Sheets message like this:
+
+```
+Hi {first_name},
+
+Here are the property brochures you requested!
+
+Attachments: [https://drive.google.com/file/d/YOUR_FILE_ID/view]
+```
+
+### Features
+
+✅ **Smart Caching**: Files are downloaded once and cached locally  
+✅ **Multiple Files**: Send multiple images/PDFs in one message  
+✅ **Supported Formats**: Images (JPG, PNG, GIF), Videos (MP4), Documents (PDF)  
+✅ **Auto-Detection**: Automatically finds and parses attachment URLs  
+
+### Example Usage
+
+**Single Image:**
+```
+Check out this floor plan!
+
+Attachments: [https://drive.google.com/file/d/1ABC123/view]
+```
+
+**Multiple Files:**
+```
+Property details attached.
+
+Attachments: [https://drive.google.com/file/d/IMG1/view, https://drive.google.com/file/d/PDF1/view, https://drive.google.com/file/d/IMG2/view]
+```
+
+📚 **For detailed documentation**, see: [`whatsapp-agent/ATTACHMENTS_README.md`](whatsapp-agent/ATTACHMENTS_README.md)
+
 ## Important Notes
 
 1. **Screen Resolution**: The system works best at 1920x1080 or higher

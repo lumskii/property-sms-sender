@@ -2,6 +2,7 @@ from whatsapp_messaging import send_followup_messages
 import sys
 import os
 import time
+import argparse
 from datetime import datetime
 import pytz
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'google-sheets-agent'))
@@ -43,8 +44,18 @@ def wait_for_business_hours():
         time.sleep(wait_minutes * 60)  # Convert minutes to seconds
 
 if __name__ == '__main__':
+    # --- ARGUMENT PARSING ---
+    parser = argparse.ArgumentParser(description='Godrej Aristocrat WhatsApp Campaign')
+    parser.add_argument('--test', action='store_true', 
+                       help='Run in test mode (bypass business hours check and enable manual confirmation)')
+    parser.add_argument('--force', action='store_true',
+                       help='Force run outside business hours (bypass time check)')
+    args = parser.parse_args()
+    
     # --- CONFIGURATION ---
-    automated_script_sending = True  # Set to True for automated daily runs
+    automated_script_sending = not args.test  # Disable automation if in test mode
+    force_run = args.force  # Force run regardless of business hours
+    testing_mode = args.test  # Enable manual confirmation for each message
     
     # Define the columns in your Google Sheet
     worksheet_name = "AnarockGodrejList"
@@ -63,12 +74,17 @@ if __name__ == '__main__':
     # --- END CONFIGURATION ---
     
     log_with_timestamp("=== Godrej Aristocrat Campaign Started ===")
+    if args.test:
+        log_with_timestamp("Running in TEST mode (business hours check disabled, manual confirmation enabled)")
+    elif args.force:
+        log_with_timestamp("Running in FORCE mode (business hours check disabled)")
     
     # Check if within business hours
-    if automated_script_sending:
+    if automated_script_sending and not force_run:
         is_business_hours, current_time = is_within_business_hours()
         if not is_business_hours:
             log_with_timestamp(f"Outside business hours (11am-6pm IST). Current time: {current_time.strftime('%H:%M:%S')}. Exiting.")
+            log_with_timestamp("TIP: Use '--test' or '--force' flag to bypass business hours check")
             exit(0)
         else:
             log_with_timestamp(f"Within business hours. Current time: {current_time.strftime('%H:%M:%S')}. Proceeding with campaign.")
@@ -91,6 +107,6 @@ if __name__ == '__main__':
     log_with_timestamp("Step 3: Starting WhatsApp message sending process...")
     send_followup_messages(worksheet_name, send_column, phone_column, message_column, contact_person_column, 
                            last_message_col, last_message_datetime_col, send_trigger_value, message_send_limit, 
-                           pause_between_messages, testing=False)
+                           pause_between_messages, testing=testing_mode)
     
     log_with_timestamp("=== Godrej Aristocrat Campaign Completed ===")

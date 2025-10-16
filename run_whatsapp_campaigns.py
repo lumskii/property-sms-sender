@@ -264,9 +264,9 @@ class WhatsAppCampaignRunner:
             # Check if another instance is running
             self.check_lock()
 
-            # Check for GitHub updates
-            if not self.check_github_updates():
-                self.log_message("WARNING: GitHub update check failed, continuing with current version")
+            # # Check for GitHub updates
+            # if not self.check_github_updates():
+            #     self.log_message("WARNING: GitHub update check failed, continuing with current version")
 
             # Activate virtual environment
             if not self.activate_venv():
