@@ -6,6 +6,7 @@ import pandas as pd
 import gspread
 import select
 import sys
+from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -317,7 +318,14 @@ def get_google_sheet():
 
     # Get the instance of the Spreadsheet
     try:
-        sheet = client.open_by_url('https://docs.google.com/spreadsheets/d/1LuOaHtPoJ_FOKPoVLSfLU8pkUeOHt2dOFGBvyJoxnFg/edit?gid=1637417292#gid=1637417292')
+        # Check if a custom sheet URL is set in environment variable
+        custom_sheet_url = os.getenv('GOOGLE_SHEET_URL')
+        if custom_sheet_url:
+            logger.debug(f"Using custom sheet URL: {custom_sheet_url}")
+            sheet = client.open_by_url(custom_sheet_url)
+        else:
+            # Default to the original project sheet
+            sheet = client.open_by_url('https://docs.google.com/spreadsheets/d/1LuOaHtPoJ_FOKPoVLSfLU8pkUeOHt2dOFGBvyJoxnFg/edit?gid=1637417292#gid=1637417292')
         return sheet
     except gspread.exceptions.SpreadsheetNotFound:
         logger.debug("Error: Spreadsheet not found. Please check the URL.")
@@ -571,8 +579,17 @@ def send_followup_messages(worksheet_name, send_col, phone_col, message_col, con
                         if downloaded_files:
                             debug_logger.debug(f"  -> Successfully downloaded {len(downloaded_files)} file(s)")
                             
-                            # Attach files to WhatsApp (send as documents for full quality)
-                            if not attach_files_to_whatsapp(driver, downloaded_files, send_as_document=True):
+                            # 🔧 FIX: Determine whether to send as documents or photos based on file types
+                            file_types = [attachment_handler.get_file_type(Path(fp)) for fp in downloaded_files]
+                            all_images = all(ft == 'image' for ft in file_types)
+                            send_as_document = not all_images  # Send as photos if all are images
+                            
+                            debug_logger.debug(f"  -> File types: {file_types}")
+                            debug_logger.debug(f"  -> All images: {all_images}")
+                            debug_logger.debug(f"  -> Send as {'photos' if not send_as_document else 'documents'}")
+                            
+                            # Attach files to WhatsApp with dynamic document/photo selection
+                            if not attach_files_to_whatsapp(driver, downloaded_files, send_as_document=send_as_document):
                                 debug_logger.error("  -> Failed to attach files, proceeding with text only")
                             else:
                                 # Wait for attachment preview to load
