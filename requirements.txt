@@ -1,0 +1,33 @@
+# Consolidated requirements for Property SMS Sender
+# Core automation dependencies
+psutil>=5.9.0
+
+# Google Sheets integration
+gspread==5.12.4
+oauth2client==4.1.3
+
+# Data processing
+pandas==2.1.3
+python-dotenv==1.0.0
+
+# WhatsApp automation
+pyautogui==0.9.54
+pillow==10.1.0
+pytesseract==0.3.13
+pywhatkit==5.4
+selenium==4.15.2
+pytz==2023.3
+webdriver-manager==4.0.1
+
+# Web requests and HTTP
+requests==2.31.0
+
+# Master agent - Flask API
+schedule==1.2.0
+flask==3.0.0
+flask-cors==4.0.0
+
+# Additional dependencies that might be needed
+google-auth==2.23.4
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1

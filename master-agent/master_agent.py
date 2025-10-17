@@ -7,7 +7,7 @@ import schedule
 from datetime import datetime
 from typing import Dict, List
 from dotenv import load_dotenv
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template, send_from_directory
 from flask_cors import CORS
 import threading
 
@@ -23,12 +23,23 @@ class MasterAgent:
             "statistics": self.get_statistics()
         }
         
-        self.app = Flask(__name__)
+        # Set up Flask with custom static folder
+        self.app = Flask(__name__, 
+                         static_folder='../dashboard',
+                         static_url_path='')
         CORS(self.app)
         self.setup_routes()
     
     def setup_routes(self):
         """Setup Flask API routes"""
+        
+        @self.app.route('/')
+        def dashboard():
+            return send_from_directory('../dashboard', 'index.html')
+        
+        @self.app.route('/<path:filename>')
+        def static_files(filename):
+            return send_from_directory('../dashboard', filename)
         
         @self.app.route('/api/status')
         def get_status():
@@ -252,7 +263,7 @@ class MasterAgent:
         
         self.start_scheduler()
         
-        self.app.run(host='0.0.0.0', port=5000, debug=False)
+        self.app.run(host='0.0.0.0', port=5000, debug=True)
 
 if __name__ == "__main__":
     master = MasterAgent()
